@@ -18,7 +18,8 @@ The project is structured as follows:
 
 ```
 CE_TranDangQuocKhanh_20280052/
-|--dataset/
+|--dataset/                   # Dataset to train models (crawl through API)
+|--SaveModels/                # Path to save training models
 ├── Forecasting.ipynb         # The main Jupyter Notebook for running the forecasts.
 └── README.md                 # This instruction file.
 ```
