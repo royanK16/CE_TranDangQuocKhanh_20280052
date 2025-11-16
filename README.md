@@ -2,6 +2,9 @@
 
 This project applies Machine Learning and Statistical methods to forecast the prices of major US stocks. It utilizes a hybrid approach combining Facebook's Prophet model with ARIMA to capture complex time-series patterns and provide smoothed, long-term forecasts.
 
+# Link to project
+https://cetrandangquockhanh20280052.streamlit.app/
+
 ## 🚀 Features
 
 - **Hybrid Forecasting Model**: Combines the strengths of Prophet (for trends, seasonality, and holidays) and ARIMA (for autoregressive patterns in residuals).
