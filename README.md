@@ -97,5 +97,7 @@ The forecasting process follows these key steps:
 
 6.  **Visualization**:
     -   An interactive **Plotly** chart is generated for each stock, displaying the historical price, the smoothed forecast, the 95% confidence interval, and a bar chart of daily percentage changes.
-
+      
+7. **Deployment**:
+    -   Using StreamlitCloud to visualize models, friendly UI and free to deploy
 ---
