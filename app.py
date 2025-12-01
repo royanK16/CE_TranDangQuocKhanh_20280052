@@ -79,9 +79,17 @@ DATA_FOLDER = 'dataset'
 def load_saved_model(stock_name):
     """Load pre-trained model from SaveModels folder"""
     try:
+        # Try relative path first
         filepath = os.path.join(MODEL_FOLDER, f"{stock_name}_model.pkl")
+        
+        # If not found, try absolute path from script directory
+        if not os.path.exists(filepath):
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            filepath = os.path.join(script_dir, MODEL_FOLDER, f"{stock_name}_model.pkl")
+        
         if not os.path.exists(filepath):
             return None
+        
         with open(filepath, 'rb') as f:
             model = pickle.load(f)
         return model
@@ -93,7 +101,17 @@ def load_saved_model(stock_name):
 def load_stock_data(stock_name):
     """Load stock data from dataset folder"""
     try:
+        # Try relative path first
         filepath = os.path.join(DATA_FOLDER, f"{stock_name}_stock_data.csv")
+        
+        # If not found, try absolute path from script directory
+        if not os.path.exists(filepath):
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            filepath = os.path.join(script_dir, DATA_FOLDER, f"{stock_name}_stock_data.csv")
+        
+        if not os.path.exists(filepath):
+            return None
+        
         df = pd.read_csv(filepath, sep='|')
         df['Date'] = pd.to_datetime(df['Date'])
         df = df.sort_values('Date').reset_index(drop=True)
@@ -283,9 +301,12 @@ def main():
         model = load_saved_model(selected_stock)
     
     if model is None:
-        st.error(f" Model not found for {selected_stock}. Please train the model first.")
-        st.info(" Run the training notebook to generate models in the SaveModels folder.")
-        return
+        st.error(f"❌ Model not found for {selected_stock}")
+        st.info("📝 **To fix this issue:**\n"
+                "1. Run `optimize_prophet.py` locally to train and save models\n"
+                "2. Commit the `SaveModels/` folder to GitHub\n"
+                "3. Redeploy this Streamlit app")
+        st.stop()
     
     # Load data
     with st.spinner(f"Loading data for {selected_stock}..."):
