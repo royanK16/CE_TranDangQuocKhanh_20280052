@@ -37,28 +37,6 @@ CV_CONFIG = {
 # ============================================================================
 
 def load_stock_data(stock_symbol, data_folder='dataset', years_to_use=10):
-    """
-    Load stock data from CSV file.
-    
-    Parameters
-    ----------
-    stock_symbol : str
-        Stock ticker symbol (e.g., 'AAPL', 'MSFT')
-    data_folder : str
-        Path to folder containing stock data CSVs
-    years_to_use : int
-        Number of recent years to use for training
-    
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with columns: Date, Close, Volume, etc.
-    
-    Raises
-    ------
-    FileNotFoundError
-        If stock data file not found
-    """
     filepath = os.path.join(data_folder, f"{stock_symbol}_stock_data.csv")
     
     if not os.path.exists(filepath):
@@ -77,19 +55,6 @@ def load_stock_data(stock_symbol, data_folder='dataset', years_to_use=10):
 
 
 def add_technical_features(df):
-    """
-    Add technical indicator features to stock data.
-    
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Stock data with 'Close' and 'Volume' columns
-    
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with added technical features
-    """
     df = df.copy()
     
     # Exponential moving averages
@@ -117,21 +82,6 @@ def add_technical_features(df):
 
 
 def fit_prophet_with_features(train_df, params):
-    """
-    Fit Prophet model with technical features as regressors.
-    
-    Parameters
-    ----------
-    train_df : pd.DataFrame
-        Training data with columns: ds, y, and optional regressor columns
-    params : dict
-        Prophet hyperparameters (changepoint_prior_scale, seasonality_prior_scale, etc.)
-    
-    Returns
-    -------
-    Prophet
-        Fitted Prophet model
-    """
     model = Prophet(
         changepoint_prior_scale=params['changepoint_prior_scale'],
         seasonality_prior_scale=params['seasonality_prior_scale'],
@@ -153,19 +103,6 @@ def fit_prophet_with_features(train_df, params):
 
 
 def prepare_prophet_data(df):
-    """
-    Prepare stock data for Prophet training.
-    
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Stock data with 'Date' and 'Close' columns
-    
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame formatted for Prophet (columns: ds, y, and regressors)
-    """
     train = pd.DataFrame({
         'ds': df['Date'],
         'y': df['Close']
@@ -181,25 +118,6 @@ def prepare_prophet_data(df):
 
 
 def evaluate_model(model, train_df, params_key, cv_results=None):
-    """
-    Evaluate Prophet model using cross-validation metrics.
-    
-    Parameters
-    ----------
-    model : Prophet
-        Fitted Prophet model
-    train_df : pd.DataFrame
-        Training data
-    params_key : str
-        Parameter combination identifier
-    cv_results : pd.DataFrame, optional
-        Pre-computed cross-validation results
-    
-    Returns
-    -------
-    dict
-        Dictionary with evaluation metrics (mape, rmse, mdape)
-    """
     metrics = {}
     
     if cv_results is not None:
@@ -255,65 +173,6 @@ def optimize_prophet_for_stock(
     use_cross_validation=False,
     early_stop=None,
 ):
-    """
-    Optimize Prophet model hyperparameters for a specific stock using grid search.
-    
-    This function:
-    1. Loads stock data
-    2. Prepares technical features
-    3. Tests multiple parameter combinations
-    4. Evaluates each model using cross-validation or train/test split
-    5. Selects and saves the best model
-    
-    Parameters
-    ----------
-    stock_symbol : str
-        Stock ticker (e.g., 'AAPL', 'MSFT')
-    data_folder : str
-        Path to folder containing stock CSVs
-    model_folder : str
-        Path to folder for saving optimized models
-    years_to_use : int
-        Number of recent years to use for training
-    param_grid : dict, optional
-        Prophet hyperparameters to test. If None, uses PROPHET_PARAM_GRID
-    cv_config : dict, optional
-        Cross-validation configuration. If None, uses CV_CONFIG
-    verbose : bool
-        Print progress information
-    use_cross_validation : bool
-        If True, use Prophet cross_validation (slower but more thorough).
-        If False, use simple train/test split (faster).
-    early_stop : dict or int or None
-        Early stopping configuration for grid search. If None, early stopping
-        is disabled. If an int is provided, it is treated as `patience` (number
-        of consecutive non-improving trials before stopping). If a dict is
-        provided it can include:
-            - 'patience' (int): number of non-improving trials to tolerate
-            - 'min_delta' (float): minimum improvement required to reset patience
-            - 'metric' (str): metric to monitor (default: 'mape')
-    
-    Returns
-    -------
-    dict
-        Dictionary containing:
-            'best_model': Prophet model object
-            'best_params': Best hyperparameter dict
-            'best_metrics': Evaluation metrics of best model
-            'all_results': DataFrame with all parameter combinations tested
-    
-    Example
-    -------
-    >>> result = optimize_prophet_for_stock(
-    ...     'AAPL',
-    ...     data_folder='dataset',
-    ...     model_folder='SaveModels',
-    ...     use_cross_validation=True
-    ... )
-    >>> print(f"Best MAPE: {result['best_metrics']['mape']:.4f}")
-    >>> print(f"Best parameters: {result['best_params']}")
-    """
-    
     if param_grid is None:
         param_grid = PROPHET_PARAM_GRID
     if cv_config is None:
@@ -495,30 +354,6 @@ def optimize_all_stocks(
     verbose=True,
     early_stop=None,
 ):
-    """
-    Optimize Prophet models for multiple stocks.
-    
-    Parameters
-    ----------
-    stock_symbols : list, optional
-        List of stock symbols to optimize. If None, uses all CSV files in data_folder.
-    data_folder : str
-        Path to folder containing stock CSVs
-    model_folder : str
-        Path to folder for saving optimized models
-    years_to_use : int
-        Number of recent years to use for training
-    use_cross_validation : bool
-        Use Prophet cross-validation (slower but more robust)
-    verbose : bool
-        Print progress information
-    
-    Returns
-    -------
-    dict
-        Dictionary mapping stock symbols to optimization results
-    """
-    
     if stock_symbols is None:
         # Auto-detect stocks from CSV files
         csv_files = [f.replace('_stock_data.csv', '') for f in os.listdir(data_folder) 
@@ -545,11 +380,6 @@ def optimize_all_stocks(
             results[stock] = {'error': str(e)}
     
     return results
-
-
-# ============================================================================
-# MAIN EXECUTION
-# ============================================================================
 
 if __name__ == "__main__":
     """
@@ -578,7 +408,7 @@ if __name__ == "__main__":
     stock_symbols=['SHW','TRV', 'UNH', 'V']
     
     results = optimize_all_stocks(
-        stock_symbols=stock_symbols,
+        #stock_symbols=stock_symbols,
         use_cross_validation=False,
         verbose=True,
         early_stop= 100
