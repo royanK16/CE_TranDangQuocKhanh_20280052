@@ -12,6 +12,9 @@ from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
+# Configure Prophet backend for Streamlit Cloud
+os.environ['PROPHET_STAN_BACKEND'] = 'CMDSTANPY'
+
 # Page configuration
 st.set_page_config(
     page_title="Stock Price Forecaster",
@@ -33,7 +36,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # Title
-st.title(" Stock Price Forecasting with Prophet")
+st.title("📈 Stock Price Forecasting with Prophet")
 st.markdown("---")
 
 # Available stocks
@@ -44,7 +47,7 @@ AVAILABLE_STOCKS = [
 ]
 
 # Sidebar controls
-st.sidebar.header(" Configuration")
+st.sidebar.header("⚙️ Configuration")
 
 selected_stock = st.sidebar.selectbox(
     "Select Stock:",
@@ -75,36 +78,27 @@ MODEL_FOLDER = 'SaveModels'
 DATA_FOLDER = 'dataset'
 
 # Helper functions
-@st.cache_resource
-def load_saved_model(stock_name):
-    """Load pre-trained model from SaveModels folder"""
-    try:
-        # Try relative path first
-        filepath = os.path.join(MODEL_FOLDER, f"{stock_name}_model.pkl")
-        
-        # If not found, try absolute path from script directory
-        if not os.path.exists(filepath):
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            filepath = os.path.join(script_dir, MODEL_FOLDER, f"{stock_name}_model.pkl")
-        
-        if not os.path.exists(filepath):
-            return None
-        
-        with open(filepath, 'rb') as f:
-            model = pickle.load(f)
-        return model
-    except Exception as e:
-        st.error(f"Error loading model: {e}")
-        return None
+def add_technical_features(df):
+    """Add technical indicators"""
+    df['EMA_7'] = df['Close'].ewm(span=7, adjust=False).mean()
+    df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
+    df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
+    df['Volatility_21'] = df['Close'].rolling(window=21, min_periods=1).std()
+    df['Volatility_21'] = df['Volatility_21'].ewm(span=5, adjust=False).mean()
+    df['Momentum_14'] = df['Close'].pct_change(periods=14).fillna(0)
+    df['Momentum_14'] = df['Momentum_14'].ewm(span=5, adjust=False).mean()
+    df['Volume_EMA_21'] = df['Volume'].ewm(span=21, adjust=False).mean()
+    df['Volume_Ratio'] = df['Volume'] / df['Volume_EMA_21']
+    df['Volume_Ratio'] = df['Volume_Ratio'].ewm(span=5, adjust=False).mean()
+    df = df.fillna(method='bfill').fillna(method='ffill')
+    return df
 
 @st.cache_data
 def load_stock_data(stock_name):
     """Load stock data from dataset folder"""
     try:
-        # Try relative path first
         filepath = os.path.join(DATA_FOLDER, f"{stock_name}_stock_data.csv")
         
-        # If not found, try absolute path from script directory
         if not os.path.exists(filepath):
             script_dir = os.path.dirname(os.path.abspath(__file__))
             filepath = os.path.join(script_dir, DATA_FOLDER, f"{stock_name}_stock_data.csv")
@@ -120,20 +114,108 @@ def load_stock_data(stock_name):
         st.error(f"Error loading data: {e}")
         return None
 
-def add_technical_features(df):
-    """Add technical indicators"""
-    df['EMA_7'] = df['Close'].ewm(span=7, adjust=False).mean()
-    df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
-    df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
-    df['Volatility_21'] = df['Close'].rolling(window=21, min_periods=1).std()
-    df['Volatility_21'] = df['Volatility_21'].ewm(span=5, adjust=False).mean()
-    df['Momentum_14'] = df['Close'].pct_change(periods=14).fillna(0)
-    df['Momentum_14'] = df['Momentum_14'].ewm(span=5, adjust=False).mean()
-    df['Volume_EMA_21'] = df['Volume'].ewm(span=21, adjust=False).mean()
-    df['Volume_Ratio'] = df['Volume'] / df['Volume_EMA_21']
-    df['Volume_Ratio'] = df['Volume_Ratio'].ewm(span=5, adjust=False).mean()
-    df = df.fillna(method='bfill').fillna(method='ffill')
-    return df
+@st.cache_resource
+def load_or_train_model(stock_name, train_data):
+    """Load saved forecast or train new model"""
+    
+    # Try to load saved forecast first
+    forecast_path = os.path.join(MODEL_FOLDER, f"{stock_name}_forecast.pkl")
+    params_path = os.path.join(MODEL_FOLDER, f"{stock_name}_best_params.pkl")
+    
+    # Check if files exist
+    if os.path.exists(forecast_path):
+        try:
+            with open(forecast_path, 'rb') as f:
+                saved_forecast = pickle.load(f)
+            
+            # Convert string dates back to datetime if needed
+            if isinstance(saved_forecast['ds'].iloc[0], str):
+                saved_forecast['ds'] = pd.to_datetime(saved_forecast['ds'])
+            
+            st.success(f"✅ Loaded pre-trained forecast for {stock_name}")
+            return saved_forecast, "loaded"
+            
+        except Exception as e:
+            st.warning(f"Could not load saved forecast: {e}")
+    
+    # If no saved forecast, train the model
+    st.info(f"⚙️ Training model for {stock_name}... This may take a few minutes.")
+    
+    try:
+        # Load best parameters if available
+        best_params = None
+        if os.path.exists(params_path):
+            try:
+                with open(params_path, 'rb') as f:
+                    best_params = pickle.load(f)
+                st.success("✅ Loaded best parameters")
+            except:
+                pass
+        
+        # Create Prophet model
+        if best_params:
+            model = Prophet(
+                changepoint_prior_scale=float(best_params['changepoint_prior_scale']),
+                seasonality_prior_scale=float(best_params['seasonality_prior_scale']),
+                seasonality_mode=str(best_params['seasonality_mode']),
+                changepoint_range=float(best_params.get('changepoint_range', 0.8)),
+                daily_seasonality=False,
+                weekly_seasonality=False,
+                yearly_seasonality=True,
+                interval_width=0.95
+            )
+        else:
+            # Use default parameters
+            volatility = train_data['y'].pct_change().std()
+            
+            if volatility > 0.03:
+                model = Prophet(
+                    changepoint_prior_scale=0.03,
+                    seasonality_prior_scale=3,
+                    seasonality_mode='multiplicative',
+                    changepoint_range=0.85,
+                    daily_seasonality=False,
+                    weekly_seasonality=False,
+                    yearly_seasonality=True,
+                    interval_width=0.95
+                )
+            else:
+                model = Prophet(
+                    changepoint_prior_scale=0.02,
+                    seasonality_prior_scale=5,
+                    seasonality_mode='additive',
+                    changepoint_range=0.82,
+                    daily_seasonality=False,
+                    weekly_seasonality=False,
+                    yearly_seasonality=True,
+                    interval_width=0.95
+                )
+        
+        # Add seasonality and regressors
+        model.add_country_holidays(country_name='US')
+        model.add_seasonality(name='monthly', period=30.5, fourier_order=3)
+        model.add_seasonality(name='quarterly', period=91.25, fourier_order=4)
+        
+        regressor_cols = ['EMA_7', 'EMA_21', 'EMA_50', 'Volatility_21', 'Momentum_14', 'Volume_Ratio']
+        for col in regressor_cols:
+            if col in train_data.columns:
+                model.add_regressor(col, standardize='auto')
+        
+        # Train model
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            model.fit(train_data)
+        
+        st.success(f"✅ Model trained successfully for {stock_name}")
+        
+        # Return the trained model and status
+        return model, "trained"
+        
+    except Exception as e:
+        st.error(f"❌ Error training model: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+        raise
 
 def smooth_forecast(forecast_series, strength=0.7):
     """Apply Gaussian smoothing"""
@@ -296,25 +378,14 @@ def create_forecast_chart(stock_name, last_90_days, future_forecast, forecast_da
 
 # Main app logic
 def main():
-    # Load model
-    with st.spinner(f"Loading model for {selected_stock}..."):
-        model = load_saved_model(selected_stock)
-    
-    if model is None:
-        st.error(f"❌ Model not found for {selected_stock}")
-        st.info("📝 **To fix this issue:**\n"
-                "1. Run `optimize_prophet.py` locally to train and save models\n"
-                "2. Commit the `SaveModels/` folder to GitHub\n"
-                "3. Redeploy this Streamlit app")
-        st.stop()
-    
     # Load data
     with st.spinner(f"Loading data for {selected_stock}..."):
         df = load_stock_data(selected_stock)
     
     if df is None:
-        st.error(f" Data not found for {selected_stock}.")
-        return
+        st.error(f"❌ Data not found for {selected_stock}.")
+        st.info("Make sure the dataset folder contains the stock data CSV files.")
+        st.stop()
     
     # Prepare data (last 10 years)
     last_date = df['Date'].max()
@@ -331,54 +402,72 @@ def main():
         if col in df.columns:
             train[col] = df[col]
     
-    # Create forecast
+    # Load or train model
+    with st.spinner(f"Loading/Training model for {selected_stock}..."):
+        model_or_forecast, status = load_or_train_model(selected_stock, train)
+    
+    # Generate forecast
     with st.spinner("Generating forecast..."):
-        future = model.make_future_dataframe(periods=forecast_days)
-        
-        # Extrapolate regressors
-        for col in regressor_cols:
-            if col in train.columns:
-                last_values = train[col].tail(30).values
-                trend = np.mean(np.diff(last_values))
-                last_value = train[col].iloc[-1]
-                future_values = [last_value + trend * i * 0.5 for i in range(1, forecast_days + 1)]
-                future.loc[future['ds'] > train['ds'].max(), col] = future_values
-                future.loc[future['ds'] <= train['ds'].max(), col] = train[col].values
-        
-        forecast = model.predict(future)
-        
-        # Apply hybrid ARIMA if selected
-        if use_hybrid:
-            try:
-                recent_data = train['y'].tail(365).values
-                arima_model = fit_arima_trend(recent_data, order=(1, 1, 1))
-                arima_forecast = arima_model.forecast(steps=forecast_days)
-                future_prophet = forecast[forecast['ds'] > train['ds'].max()]['yhat'].values
-                blended_forecast = 0.7 * future_prophet + 0.3 * arima_forecast
-                forecast.loc[forecast['ds'] > train['ds'].max(), 'yhat'] = blended_forecast
-            except:
-                pass
-        
-        # Apply smoothing
-        future_mask = forecast['ds'] > train['ds'].max()
-        forecast.loc[future_mask, 'yhat'] = smooth_forecast(
-            forecast.loc[future_mask, 'yhat'].values, 
-            strength=smoothing_strength
-        )
-        forecast.loc[future_mask, 'yhat_lower'] = smooth_forecast(
-            forecast.loc[future_mask, 'yhat_lower'].values, 
-            strength=smoothing_strength * 0.8
-        )
-        forecast.loc[future_mask, 'yhat_upper'] = smooth_forecast(
-            forecast.loc[future_mask, 'yhat_upper'].values, 
-            strength=smoothing_strength * 0.8
-        )
+        if status == "loaded":
+            # Use loaded forecast
+            forecast = model_or_forecast
+        else:
+            # Generate new forecast from trained model
+            model = model_or_forecast
+            future = model.make_future_dataframe(periods=forecast_days)
+            
+            # Extrapolate regressors
+            for col in regressor_cols:
+                if col in train.columns:
+                    last_values = train[col].tail(30).values
+                    trend = np.mean(np.diff(last_values))
+                    last_value = train[col].iloc[-1]
+                    future_values = [last_value + trend * i * 0.5 for i in range(1, forecast_days + 1)]
+                    future.loc[future['ds'] > train['ds'].max(), col] = future_values
+                    future.loc[future['ds'] <= train['ds'].max(), col] = train[col].values
+            
+            forecast = model.predict(future)
+            
+            # Apply hybrid ARIMA if selected
+            if use_hybrid:
+                try:
+                    recent_data = train['y'].tail(365).values
+                    arima_model = fit_arima_trend(recent_data, order=(1, 1, 1))
+                    arima_forecast = arima_model.forecast(steps=forecast_days)
+                    future_prophet = forecast[forecast['ds'] > train['ds'].max()]['yhat'].values
+                    blended_forecast = 0.7 * future_prophet + 0.3 * arima_forecast
+                    forecast.loc[forecast['ds'] > train['ds'].max(), 'yhat'] = blended_forecast
+                except:
+                    pass
+            
+            # Apply smoothing
+            future_mask = forecast['ds'] > train['ds'].max()
+            forecast.loc[future_mask, 'yhat'] = smooth_forecast(
+                forecast.loc[future_mask, 'yhat'].values, 
+                strength=smoothing_strength
+            )
+            forecast.loc[future_mask, 'yhat_lower'] = smooth_forecast(
+                forecast.loc[future_mask, 'yhat_lower'].values, 
+                strength=smoothing_strength * 0.8
+            )
+            forecast.loc[future_mask, 'yhat_upper'] = smooth_forecast(
+                forecast.loc[future_mask, 'yhat_upper'].values, 
+                strength=smoothing_strength * 0.8
+            )
     
     # Display metrics
     current_price = df['Close'].iloc[-1]
-    forecast_price = forecast[forecast['ds'] > train['ds'].max()]['yhat'].iloc[-1]
-    price_change = forecast_price - current_price
-    pct_change = (price_change / current_price) * 100
+    forecast_start = train['ds'].iloc[-1]
+    future_forecast_only = forecast[forecast['ds'] > forecast_start].copy()
+    
+    if len(future_forecast_only) > 0:
+        forecast_price = future_forecast_only['yhat'].iloc[min(forecast_days-1, len(future_forecast_only)-1)]
+        price_change = forecast_price - current_price
+        pct_change = (price_change / current_price) * 100
+    else:
+        forecast_price = current_price
+        price_change = 0
+        pct_change = 0
     
     col1, col2, col3, col4 = st.columns(4)
     
@@ -399,16 +488,14 @@ def main():
     st.markdown("---")
     
     # Plot
-    forecast_start = train['ds'].iloc[-1]
-    future_forecast = forecast[forecast['ds'] > forecast_start].copy()
     last_90_days = train.tail(90)
     
-    fig = create_forecast_chart(selected_stock, last_90_days, future_forecast, forecast_days)
+    fig = create_forecast_chart(selected_stock, last_90_days, future_forecast_only, forecast_days)
     st.plotly_chart(fig, use_container_width=True)
     
     # Forecast table
-    st.markdown("### Forecast Details")
-    forecast_table = future_forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].copy()
+    st.markdown("### 📋 Forecast Details")
+    forecast_table = future_forecast_only[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].copy()
     forecast_table.columns = ['Date', 'Forecast Price', 'Lower Bound', 'Upper Bound']
     forecast_table['Date'] = forecast_table['Date'].dt.strftime('%Y-%m-%d')
     forecast_table['Forecast Price'] = forecast_table['Forecast Price'].apply(lambda x: f"${x:.2f}")
@@ -420,7 +507,7 @@ def main():
     # Download button
     csv = forecast_table.to_csv(index=False)
     st.download_button(
-        label=" Download Forecast CSV",
+        label="📥 Download Forecast CSV",
         data=csv,
         file_name=f"{selected_stock}_forecast_{datetime.now().strftime('%Y%m%d')}.csv",
         mime="text/csv"
