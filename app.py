@@ -148,7 +148,6 @@ def load_or_train_model(stock_name, train_data):
             try:
                 with open(params_path, 'rb') as f:
                     best_params = pickle.load(f)
-                st.success("✅ Loaded best parameters")
             except:
                 pass
         
@@ -205,8 +204,6 @@ def load_or_train_model(stock_name, train_data):
         with warnings.catch_warnings():
             warnings.simplefilter('ignore')
             model.fit(train_data)
-        
-        st.success(f"✅ Model trained successfully for {stock_name}")
         
         # Return the trained model and status
         return model, "trained"
